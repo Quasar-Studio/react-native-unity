@@ -7,11 +7,10 @@ import {
 } from '@expo/config-plugins';
 import type { ConfigPlugin } from '@expo/config-plugins';
 
-const withUnity: ConfigPlugin<{ name?: string }> = (
-  config,
-  { name = 'react-native-unity' } = {}
-) => {
-  config.name = name;
+const withUnity: ConfigPlugin = (config) => {
+  // NOTE: this plugin only wires up the Android gradle/strings config needed to
+  // include the exported `unityLibrary`. It must NOT touch `config.name` —
+  // doing so would rename the consumer's app on every `expo prebuild`.
   config = withProjectBuildGradleMod(config);
   config = withSettingsGradleMod(config);
   config = withGradlePropertiesMod(config);

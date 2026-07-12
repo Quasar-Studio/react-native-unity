@@ -12,10 +12,12 @@ Attention! Added support for Unity 2023 and above
 
 | Platform         | Supported |
 | ---------------- | --------- |
-| iOS Simulator    | ❌        |
+| iOS Simulator    | ⚠️ optional (see [iOS Simulator support](#ios-simulator-support-optional)) |
 | iOS Device       | ✅        |
 | Android Emulator | ✅        |
 | Android Device   | ✅        |
+
+> The iOS Simulator works only with the optional XCFramework export described below; the default device-only `UnityFramework.framework` does not link on the simulator.
 
 # Installation
 
@@ -126,7 +128,7 @@ If you're using expo, you're done. The built-in expo plugin will handle the rest
 
 # Known issues
 
-- Does not work on the iOS simulator.
+- Does not work on the iOS simulator with the default device-only framework. See [iOS Simulator support (optional)](#ios-simulator-support-optional) for the XCFramework workaround.
 - On iOS the Unity view is waiting for a parent with dimensions greater than 0 (from RN side). Please take care of this because if it is not the case, your app will crash with the native message `MTLTextureDescriptor has width of zero`.
 
 # Usage
@@ -182,7 +184,9 @@ export default Unity;
 ## Props
 
 - `style: ViewStyle` - styles the UnityView. (Won't show on Android without dimensions. Recommended to give it `flex: 1` as in the example)
-- `onUnityMessage?: (event: NativeSyntheticEvent)` - receives a message from a Unity
+- `onUnityMessage?: (event: { nativeEvent: { message: string } }) => void` - receives a message from Unity. The payload is available as `event.nativeEvent.message`
+- `onPlayerUnload?: (event) => void` - fired when the Unity player has been unloaded
+- `onPlayerQuit?: (event) => void` - fired when the Unity player has quit
 - `androidKeepPlayerMounted?: boolean` - if set to true, keep the player mounted even when the view that contains it has lost focus. The player will be paused on blur and resumed on focus. **ANDROID ONLY**
 - `fullScreen?: boolean` - defaults to true. If set to false, will not request full screen access. **ANDROID ONLY**
 
@@ -191,8 +195,9 @@ export default Unity;
 - `postMessage(gameObject, methodName, message)` - sends a message to the Unity. **FOR IOS:** The native method of unity is used to send a message
   `sendMessageToGOWithName:(const char*)goName functionName:(const char*)name message:(const char*)msg;`, more details can be found in the [documentation](https://docs.unity3d.com/2021.1/Documentation/Manual/UnityasaLibrary-iOS.html)
 - `unloadUnity()` - the Unity is unloaded automatically when the react-native component is unmounted, but if you want to unload the Unity, you can call this method
-- `pauseUnity?: (pause: boolean)` - pause the Unity
-- `windowFocusChanged(hasFocus: boolean = false)` - simulate focus change (intended to be used to recover from black screen (not rendering) after remounting Unity view when `resumeUnity` does not work) **ANDROID ONLY**
+- `pauseUnity(pause: boolean)` - pause (`true`) or resume (`false`) the Unity player
+- `resumeUnity()` - resume the Unity player after it was paused
+- `windowFocusChanged(hasFocus: boolean = true)` - simulate focus change (intended to be used to recover from black screen (not rendering) after remounting Unity view when `resumeUnity` does not work) **ANDROID ONLY**
 
 # Contributing
 

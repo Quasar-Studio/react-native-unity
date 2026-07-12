@@ -65,6 +65,10 @@ export default class UnityView extends React.Component<RNUnityViewProps> {
   }
 
   componentWillUnmount() {
+    // Full React unmount is a permanent teardown, so we unload the engine here.
+    // This is intentionally different from Fabric view *recycling*
+    // (RNUnityView.prepareForRecycle), which only pauses the shared instance so
+    // it can be reused on the next mount. See issue #180.
     if (this.ref.current) {
       Commands.unloadUnity(this.ref.current);
     }
