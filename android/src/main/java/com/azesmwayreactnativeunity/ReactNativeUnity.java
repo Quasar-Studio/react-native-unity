@@ -3,8 +3,10 @@ package com.azesmwayreactnativeunity;
 import android.app.Activity;
 import android.graphics.PixelFormat;
 import android.os.Build;
+import android.util.Log;
 import android.view.ViewGroup;
 import android.view.WindowManager;
+import android.widget.FrameLayout;
 
 import static android.view.ViewGroup.LayoutParams.MATCH_PARENT;
 
@@ -14,7 +16,9 @@ public class ReactNativeUnity {
     private static UPlayer unityPlayer;
     public static boolean _isUnityReady;
     public static boolean _isUnityPaused;
-    public static boolean _fullScreen;
+    public static boolean _fullScreen = true;
+
+    private static final String TAG = "ReactNativeUnity";
 
     public static UPlayer getPlayer() {
         if (!_isUnityReady) {
@@ -51,7 +55,13 @@ public class ReactNativeUnity {
 
                     try {
                         unityPlayer = new UPlayer(activity, callback);
-                    } catch (ClassNotFoundException | InstantiationException | IllegalAccessException | InvocationTargetException e) {}
+                    } catch (ClassNotFoundException | InstantiationException | IllegalAccessException | InvocationTargetException e) {
+                        // Previously swallowed silently, which left unityPlayer == null and
+                        // caused an unrelated NPE below (windowFocusChanged) with no trace of
+                        // the real cause. Log and abort initialization instead.
+                        Log.e(TAG, "Failed to create Unity player", e);
+                        return;
+                    }
 
                     try {
                         // wait a moment. fix unity cannot start when startup.
@@ -71,7 +81,11 @@ public class ReactNativeUnity {
 
                     unityPlayer.resume();
 
-                    if (!fullScreen) {
+                    // `fullScreen` reflects the current window flags; `_fullScreen` is the
+                    // component prop (defaults true). Honor the prop additively so passing
+                    // fullScreen={false} actually forces non-fullscreen, while the default
+                    // keeps the previous behavior untouched.
+                    if (!fullScreen || !_fullScreen) {
                         activity.getWindow().addFlags(WindowManager.LayoutParams.FLAG_FORCE_NOT_FULLSCREEN);
                         activity.getWindow().clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
                     }
@@ -112,6 +126,12 @@ public class ReactNativeUnity {
             return;
         }
 
+        FrameLayout frame = unityPlayer.requestFrame();
+        if (frame == null) {
+            Log.e(TAG, "addUnityViewToBackground: Unity frame unavailable (incompatible Unity version?)");
+            return;
+        }
+
         if (unityPlayer.getParentPlayer() != null) {
             // NOTE: If we're being detached as part of the transition, make sure
             // to explicitly finish the transition first, as it might still keep
@@ -119,8 +139,8 @@ public class ReactNativeUnity {
             // prevents a crash on an `addContentView()` later on.
             // Otherwise, if there's no transition, it's a no-op.
             // See https://stackoverflow.com/a/58247331
-            ((ViewGroup) unityPlayer.getParentPlayer()).endViewTransition(unityPlayer.requestFrame());
-            ((ViewGroup) unityPlayer.getParentPlayer()).removeView(unityPlayer.requestFrame());
+            ((ViewGroup) unityPlayer.getParentPlayer()).endViewTransition(frame);
+            ((ViewGroup) unityPlayer.getParentPlayer()).removeView(frame);
         }
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
@@ -129,7 +149,7 @@ public class ReactNativeUnity {
 
         final Activity activity = ((Activity) unityPlayer.getContextPlayer());
         ViewGroup.LayoutParams layoutParams = new ViewGroup.LayoutParams(1, 1);
-        activity.addContentView(unityPlayer.requestFrame(), layoutParams);
+        activity.addContentView(frame, layoutParams);
     }
 
     public static void addUnityViewToGroup(ViewGroup group) throws NoSuchMethodException, InvocationTargetException, IllegalAccessException {
@@ -137,12 +157,18 @@ public class ReactNativeUnity {
             return;
         }
 
+        FrameLayout frame = unityPlayer.requestFrame();
+        if (frame == null) {
+            Log.e(TAG, "addUnityViewToGroup: Unity frame unavailable (incompatible Unity version?)");
+            return;
+        }
+
         if (unityPlayer.getParentPlayer() != null) {
-            ((ViewGroup) unityPlayer.getParentPlayer()).removeView(unityPlayer.requestFrame());
+            ((ViewGroup) unityPlayer.getParentPlayer()).removeView(frame);
         }
 
         ViewGroup.LayoutParams layoutParams = new ViewGroup.LayoutParams(MATCH_PARENT, MATCH_PARENT);
-        group.addView(unityPlayer.requestFrame(), 0, layoutParams);
+        group.addView(frame, 0, layoutParams);
         unityPlayer.windowFocusChanged(true);
         unityPlayer.requestFocusPlayer();
         unityPlayer.resume();

@@ -23,7 +23,22 @@ public class UPlayer {
             _player = Class.forName("com.unity3d.player.UnityPlayer");
         }
 
-        Constructor<?> constructor = _player.getConstructors()[1];
+        // Pick the (Context/Activity, IUnityPlayerLifecycleEvents) constructor by signature.
+        // Relying on getConstructors()[1] is fragile: the array order is unspecified and
+        // Unity 6's UnityPlayerForActivityOrService exposes a different set of constructors.
+        Constructor<?> constructor = null;
+        for (Constructor<?> c : _player.getConstructors()) {
+            Class<?>[] params = c.getParameterTypes();
+            if (params.length == 2 && params[1].isAssignableFrom(IUnityPlayerLifecycleEvents.class)) {
+                constructor = c;
+                break;
+            }
+        }
+        if (constructor == null) {
+            throw new InstantiationException(
+                "No compatible UnityPlayer constructor (Context, IUnityPlayerLifecycleEvents) found for " + _player.getName());
+        }
+
         unityPlayer = (UnityPlayer) constructor.newInstance(activity, new IUnityPlayerLifecycleEvents() {
             @Override
             public void onUnityPlayerUnloaded() {
@@ -61,6 +76,9 @@ public class UPlayer {
         try {
             Method getFrameLayout = unityPlayer.getClass().getMethod("getFrameLayout");
             FrameLayout frame = (FrameLayout) this.requestFrame();
+            if (frame == null) {
+                return null;
+            }
 
             return frame.getParent();
         } catch (NoSuchMethodException e) {
@@ -83,7 +101,9 @@ public class UPlayer {
             Method getFrameLayout = unityPlayer.getClass().getMethod("getFrameLayout");
 
             FrameLayout frame = (FrameLayout) this.requestFrame();
-            frame.requestFocus();
+            if (frame != null) {
+                frame.requestFocus();
+            }
         } catch (NoSuchMethodException e) {
             Method requestFocus = unityPlayer.getClass().getMethod("requestFocus");
 
@@ -108,7 +128,9 @@ public class UPlayer {
 
     public void setZ(float v) throws NoSuchMethodException, InvocationTargetException, IllegalAccessException {
         try {
-            Method setZ = unityPlayer.getClass().getMethod("setZ");
+            // View.setZ takes a float — getMethod("setZ") with no arg types always threw
+            // NoSuchMethodException, so this used to silently do nothing.
+            Method setZ = unityPlayer.getClass().getMethod("setZ", float.class);
 
             setZ.invoke(unityPlayer, v);
         } catch (NoSuchMethodException e) {}

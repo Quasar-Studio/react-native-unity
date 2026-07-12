@@ -139,16 +139,21 @@ public class ReactNativeUnityViewManager extends ReactNativeUnityViewManagerSpec
   @Override
   public void pauseUnity(ReactNativeUnityView view, boolean pause) {
     if (isUnityReady()) {
-      assert getPlayer() != null;
-      getPlayer().pause();
+      // Honor the argument (previously always paused) and go through
+      // ReactNativeUnity.pause/resume so `_isUnityPaused` stays in sync — the flag
+      // is what onHostResume/restoreUnityUserState rely on.
+      if (pause) {
+        ReactNativeUnity.pause();
+      } else {
+        ReactNativeUnity.resume();
+      }
     }
   }
 
   @Override
   public void resumeUnity(ReactNativeUnityView view) {
     if (isUnityReady()) {
-      assert getPlayer() != null;
-      getPlayer().resume();
+      ReactNativeUnity.resume();
     }
   }
 
@@ -161,6 +166,9 @@ public class ReactNativeUnityViewManager extends ReactNativeUnityViewManagerSpec
   }
 
   public static void sendMessageToMobileApp(String message) {
+    if (view == null) {
+      return;
+    }
     WritableMap data = Arguments.createMap();
     data.putString("message", message);
     ReactContext reactContext = (ReactContext) view.getContext();
@@ -170,6 +178,11 @@ public class ReactNativeUnityViewManager extends ReactNativeUnityViewManagerSpec
   @Override
   public void onDropViewInstance(ReactNativeUnityView view) {
     view.removeOnAttachStateChangeListener(this);
+    // Clear the static reference so we don't leak this destroyed view (and its
+    // Activity/Context) or dispatch Unity callbacks to a stale instance.
+    if (ReactNativeUnityViewManager.view == view) {
+      ReactNativeUnityViewManager.view = null;
+    }
     super.onDropViewInstance(view);
   }
 
