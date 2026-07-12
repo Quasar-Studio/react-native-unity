@@ -32,6 +32,7 @@ NS_ASSUME_NONNULL_BEGIN
 
 - (void)unloadUnity;
 - (void)pauseUnity:(BOOL)pause;
+- (void)resumeUnity;
 - (void)postMessage:(NSString* _Nonnull )gameObject methodName:(NSString* _Nonnull)methodName message:(NSString* _Nonnull) message;
 
 @end
@@ -55,6 +56,7 @@ NS_ASSUME_NONNULL_END
 
 - (void)unloadUnity;
 - (void)pauseUnity:(BOOL)pause;
+- (void)resumeUnity;
 - (void)postMessage:(NSString* _Nonnull )gameObject methodName:(NSString* _Nonnull)methodName message:(NSString* _Nonnull) message;
 
 

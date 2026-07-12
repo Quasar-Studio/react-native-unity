@@ -32,11 +32,16 @@ UnityFramework* UnityFrameworkLoad() {
     return ufw;
 }
 
-@implementation RNUnityView
+@implementation RNUnityView {
+    // YES once the Fabric view paused Unity for recycling, so we know to resume
+    // the shared instance when the view comes back on screen (#180).
+    BOOL _pausedForRecycle;
+    // YES once this view tore Unity down; prevents a late layoutSubviews retry
+    // from resurrecting the engine during teardown.
+    BOOL _unloaded;
+}
 
 NSDictionary* appLaunchOpts;
-
-static RNUnityView *sharedInstance;
 
 - (bool)unityIsInitialized {
     return [self ufw] && [[self ufw] appController];
@@ -86,19 +91,29 @@ static RNUnityView *sharedInstance;
 
    // Under Fabric, updateProps: is not reliably dispatched on the initial mount, so Unity
    // must also be initialized from layoutSubviews or it may never start (#174, #175).
-   if(![self unityIsInitialized]) {
+   // Guard on _unloaded so a pending retry can't resurrect a torn-down engine.
+   if(!_unloaded && ![self unityIsInitialized]) {
       [self initUnityModule];
    }
 
    if([self unityIsInitialized] && self.ufw.appController.rootView != nil) {
       self.ufw.appController.rootView.frame = self.bounds;
       [self addSubview:self.ufw.appController.rootView];
-   } else {
+
+      // Coming back on screen after the view was recycled: resume the shared
+      // instance that prepareForRecycle paused (#180).
+      if (_pausedForRecycle) {
+         [[self ufw] pause:NO];
+         _pausedForRecycle = NO;
+      }
+   } else if (!_unloaded) {
       // Unity boots asynchronously: when the view mounts once at app start (persistent-host
       // setups), the engine finishes booting AFTER the last layout pass and nobody attaches
       // its root view — the screen stays black while the game runs. Retry until it exists.
+      // Weak self so the 0.25s retry timer never keeps a dead view alive.
+      __weak RNUnityView *weakSelf = self;
       dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.25 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-         [self setNeedsLayout];
+         [weakSelf setNeedsLayout];
       });
    }
 }
@@ -109,7 +124,16 @@ static RNUnityView *sharedInstance;
     }
 }
 
+- (void)resumeUnity {
+    _pausedForRecycle = NO;
+    if([self unityIsInitialized]) {
+        [[self ufw] pause:NO];
+    }
+}
+
 - (void)unloadUnity {
+    _unloaded = YES;
+    _pausedForRecycle = NO;
     UIWindow * main = [[[UIApplication sharedApplication] delegate] window];
     if(main != nil) {
         [main makeKeyAndVisible];
@@ -175,6 +199,7 @@ static RNUnityView *sharedInstance;
     // Pause instead — the next mount resumes the same instance.
     if ([self unityIsInitialized]) {
       [[self ufw] pause:true];
+      _pausedForRecycle = YES;
     }
 }
 
@@ -194,6 +219,29 @@ static RNUnityView *sharedInstance;
           .message=[[data valueForKey:@"message"] UTF8String]
         };
         gridViewEventEmitter->onUnityMessage(event);
+      }
+    };
+
+    // Fabric delivers events through the C++ EventEmitter, not the props blocks,
+    // so onPlayerUnload/onPlayerQuit have to be wired the same way as onUnityMessage
+    // or they never reach JS on the new architecture.
+    self.onPlayerUnload = [self](NSDictionary* data) {
+      if (_eventEmitter != nil) {
+        auto emitter = std::static_pointer_cast<RNUnityViewEventEmitter const>(_eventEmitter);
+        facebook::react::RNUnityViewEventEmitter::OnPlayerUnload event = {
+          .message = data ? [[data valueForKey:@"message"] UTF8String] : ""
+        };
+        emitter->onPlayerUnload(event);
+      }
+    };
+
+    self.onPlayerQuit = [self](NSDictionary* data) {
+      if (_eventEmitter != nil) {
+        auto emitter = std::static_pointer_cast<RNUnityViewEventEmitter const>(_eventEmitter);
+        facebook::react::RNUnityViewEventEmitter::OnPlayerQuit event = {
+          .message = data ? [[data valueForKey:@"message"] UTF8String] : ""
+        };
+        emitter->onPlayerQuit(event);
       }
     };
   }
