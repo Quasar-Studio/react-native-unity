@@ -2,6 +2,8 @@ package com.azesmwayreactnativeunity;
 
 import static com.azesmwayreactnativeunity.ReactNativeUnity.*;
 
+import android.content.Context;
+import android.content.ContextWrapper;
 import android.os.Handler;
 import android.view.View;
 
@@ -14,12 +16,15 @@ import com.facebook.react.bridge.LifecycleEventListener;
 import com.facebook.react.bridge.ReactApplicationContext;
 import com.facebook.react.bridge.ReactContext;
 import com.facebook.react.bridge.ReadableArray;
+import com.facebook.react.bridge.UiThreadUtil;
 import com.facebook.react.bridge.WritableMap;
 import com.facebook.react.common.MapBuilder;
 import com.facebook.react.module.annotations.ReactModule;
 import com.facebook.react.uimanager.ThemedReactContext;
+import com.facebook.react.uimanager.UIManagerHelper;
 import com.facebook.react.uimanager.annotations.ReactProp;
-import com.facebook.react.uimanager.events.RCTEventEmitter;
+import com.facebook.react.uimanager.events.Event;
+import com.facebook.react.uimanager.events.EventDispatcher;
 
 import java.lang.reflect.InvocationTargetException;
 import java.util.Map;
@@ -45,7 +50,10 @@ public class ReactNativeUnityViewManager extends ReactNativeUnityViewManagerSpec
   @NonNull
   @Override
   public ReactNativeUnityView createViewInstance(@NonNull ThemedReactContext context) {
-    view = new ReactNativeUnityView(this.context);
+    // Build the view with the ThemedReactContext handed to us, not with the
+    // ReactApplicationContext: on Fabric the surfaceId (needed to route events to JS) is only
+    // reachable through a ThemedReactContext, and it is what every other RN view manager does.
+    view = new ReactNativeUnityView(context);
     view.addOnAttachStateChangeListener(this);
 
     if (getPlayer() != null) {
@@ -57,23 +65,24 @@ public class ReactNativeUnityViewManager extends ReactNativeUnityViewManagerSpec
             createPlayer(context.getCurrentActivity(), new UnityPlayerCallback() {
               @Override
               public void onReady() throws InvocationTargetException, NoSuchMethodException, IllegalAccessException {
-                view.setUnityPlayer(getPlayer());
+                // Unity boots asynchronously (createPlayer sleeps ~1s before signalling), so the
+                // screen may already be closed by the time we get here. Re-read the current view
+                // instead of assuming the one we created is still alive.
+                ReactNativeUnityView target = ReactNativeUnityViewManager.view;
+                if (target == null || getPlayer() == null) {
+                  return;
+                }
+                target.setUnityPlayer(getPlayer());
               }
 
               @Override
               public void onUnload() {
-                WritableMap data = Arguments.createMap();
-                data.putString("message", "MyMessage");
-                ReactContext reactContext = (ReactContext) view.getContext();
-                reactContext.getJSModule(RCTEventEmitter.class).receiveEvent(view.getId(), "onPlayerUnload", data);
+                emitEvent("onPlayerUnload", "MyMessage");
               }
 
               @Override
               public void onQuit() {
-                WritableMap data = Arguments.createMap();
-                data.putString("message", "MyMessage");
-                ReactContext reactContext = (ReactContext) view.getContext();
-                reactContext.getJSModule(RCTEventEmitter.class).receiveEvent(view.getId(), "onPlayerQuit", data);
+                emitEvent("onPlayerQuit", "MyMessage");
               }
             });
         } catch (InvocationTargetException | NoSuchMethodException | IllegalAccessException e) {}
@@ -166,13 +175,106 @@ public class ReactNativeUnityViewManager extends ReactNativeUnityViewManagerSpec
   }
 
   public static void sendMessageToMobileApp(String message) {
-    if (view == null) {
+    emitEvent("onUnityMessage", message);
+  }
+
+  /**
+   * Deliver a view event to JS defensively.
+   *
+   * <p>Unity's lifecycle callbacks (onUnityPlayerUnloaded / onUnityPlayerQuitted) and
+   * UnitySendMessage fire asynchronously from Unity's own code, long after the command that
+   * triggered them returned. Closing the Unity screen unmounts &lt;UnityView&gt;, which dispatches
+   * `unloadUnity` and then drops the view instance — `onDropViewInstance` clears the static
+   * `view`, so by the time Unity reports "unloaded" there is nothing to emit on and the old
+   * `view.getContext()` crashed with an NPE on the main thread.
+   *
+   * <p>Besides the null view, the previous implementation had three more ways to blow up or
+   * silently misbehave: it could run off the UI thread, it could touch a React context whose
+   * instance was already torn down, and `getJSModule(RCTEventEmitter)` does not deliver events to
+   * Fabric views on the new architecture. Going through the EventDispatcher covers both
+   * architectures.
+   */
+  private static void emitEvent(final String eventName, final String message) {
+    emitEvent(view, eventName, message);
+  }
+
+  private static void emitEvent(@Nullable final ReactNativeUnityView target, final String eventName, final String message) {
+    // Snapshot the view: the static field can be nulled out by onDropViewInstance at any moment.
+    if (target == null) {
       return;
     }
+
+    if (!UiThreadUtil.isOnUiThread()) {
+      UiThreadUtil.runOnUiThread(new Runnable() {
+        @Override
+        public void run() {
+          emitEvent(target, eventName, message);
+        }
+      });
+      return;
+    }
+
+    final int viewTag = target.getId();
+    if (viewTag == View.NO_ID) {
+      // View is no longer registered with the UIManager — nothing to dispatch to.
+      return;
+    }
+
+    final ReactContext reactContext = resolveReactContext(target);
+    if (reactContext == null || !reactContext.hasActiveReactInstance()) {
+      // The React instance is gone (screen/app teardown); dropping the event is the only
+      // sane thing to do here.
+      return;
+    }
+
+    final EventDispatcher dispatcher = UIManagerHelper.getEventDispatcherForReactTag(reactContext, viewTag);
+    if (dispatcher == null) {
+      return;
+    }
+
     WritableMap data = Arguments.createMap();
     data.putString("message", message);
-    ReactContext reactContext = (ReactContext) view.getContext();
-    reactContext.getJSModule(RCTEventEmitter.class).receiveEvent(view.getId(), "onUnityMessage", data);
+    dispatcher.dispatchEvent(new UnityViewEvent(UIManagerHelper.getSurfaceId(target), viewTag, eventName, data));
+  }
+
+  @Nullable
+  private static ReactContext resolveReactContext(View target) {
+    Context context = target.getContext();
+    while (context instanceof ContextWrapper) {
+      if (context instanceof ReactContext) {
+        return (ReactContext) context;
+      }
+      context = ((ContextWrapper) context).getBaseContext();
+    }
+
+    return context instanceof ReactContext ? (ReactContext) context : null;
+  }
+
+  /**
+   * Generic direct event carrying `{ message }`. Works on both architectures: Paper uses
+   * `dispatch()` (via getEventData), Fabric uses `dispatchModern()` with the surfaceId.
+   */
+  private static class UnityViewEvent extends Event<UnityViewEvent> {
+    private final String eventName;
+    private final WritableMap eventData;
+
+    UnityViewEvent(int surfaceId, int viewTag, String eventName, WritableMap eventData) {
+      super(surfaceId, viewTag);
+      this.eventName = eventName;
+      this.eventData = eventData;
+    }
+
+    @NonNull
+    @Override
+    public String getEventName() {
+      return eventName;
+    }
+
+    @Nullable
+    @Override
+    protected WritableMap getEventData() {
+      return eventData;
+    }
   }
 
   @Override
@@ -206,8 +308,9 @@ public class ReactNativeUnityViewManager extends ReactNativeUnityViewManagerSpec
   @Override
   public void onHostDestroy() {
     if (isUnityReady()) {
-      assert getPlayer() != null;
-      getPlayer().destroy();
+      // Go through ReactNativeUnity so the shared state is cleared with the player — calling
+      // UPlayer.destroy() directly left `_isUnityReady` true for a destroyed runtime.
+      ReactNativeUnity.destroy();
     }
   }
 
