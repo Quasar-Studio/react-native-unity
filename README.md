@@ -126,10 +126,31 @@ If you're using expo, you're done. The built-in expo plugin will handle the rest
    <string name="game_view_content_description">Game view</string>
    ```
 
+### Android AR (ARCore) permission
+
+If your Unity project uses AR — AR Foundation / ARCore — add this permission to `android/app/src/main/AndroidManifest.xml`. **This applies to expo users too**: the config plugin does not add it, so declare it through `android.permissions` in `app.json`.
+
+```xml
+<uses-permission android:name="android.permission.HIGH_SAMPLING_RATE_SENSORS" />
+```
+
+Since Android 12 (API 31), an app targeting API 31+ needs this permission to read sensors faster than 200 Hz. ARCore requests the IMU at its maximum rate — 500 Hz on many devices — so without it the sensor registration is rejected, the ARCore session never starts and the camera stays black. In logcat it looks like this:
+
+```
+Failed to register sensor to queue 0
+...
+ArPresto::Moving from ArPrestoStatus 102 to 200
+operator(): width <= 0
+```
+
+`HIGH_SAMPLING_RATE_SENSORS` is a normal permission — it is granted at install time and needs no runtime request. AR Foundation normally merges it in on its own, but in a Unity as a Library setup it often does not reach the host app's manifest, and the failure only shows on devices whose IMU runs above 200 Hz (many Samsung models) — which is why it can look device-specific.
+
 # Known issues
 
 - Does not work on the iOS simulator with the default device-only framework. See [iOS Simulator support (optional)](#ios-simulator-support-optional) for the XCFramework workaround.
 - On iOS the Unity view is waiting for a parent with dimensions greater than 0 (from RN side). Please take care of this because if it is not the case, your app will crash with the native message `MTLTextureDescriptor has width of zero`.
+- On Android, an ARCore scene fails to start the camera unless the app declares `android.permission.HIGH_SAMPLING_RATE_SENSORS`. See [Android AR (ARCore) permission](#android-ar-arcore-permission).
+- Unity applies its own fullscreen settings to the Activity it shares with React Native, so opening `<UnityView>` can hide the system navigation bar for the whole app (immersive sticky mode — the bar reappears on swipe, then hides again). The `fullScreen` prop only controls the status bar flag; change `Fullscreen Mode` / `Status Bar Hidden` in Unity's Player Settings, or set `Screen.fullScreen = false` in your scene.
 
 # Usage
 
