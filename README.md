@@ -6,7 +6,16 @@
 >
 > The fix touches only the native `ios/` sources, which ship as-is in the npm tarball. Use it in one of two ways:
 >
-> - Apply it as a `pnpm patch` / `patch-package` patch over `@azesmway/react-native-unity@1.1.1`.
+> - **Recommended:** apply [`patches/@azesmway__react-native-unity@1.1.1.patch`](patches/@azesmway__react-native-unity@1.1.1.patch) over the npm package.
+>   1. Copy the file into your app's `patches/`.
+>   2. Register it in `pnpm-workspace.yaml`. pnpm 10+ reads it there, not from `package.json`:
+>      ```yaml
+>      patchedDependencies:
+>        '@azesmway/react-native-unity@1.1.1': patches/@azesmway__react-native-unity@1.1.1.patch
+>      ```
+>   3. Run `pnpm install`.
+>
+>   The result is byte-identical to this fork's `ios/` sources.
 > - Install this fork pinned to a commit: `github:Quasar-Studio/react-native-unity#<sha>`. This route runs the package's `prepare` build.
 
 The plugin that allows you to embed a Unity project into React Native as a full-fledged component. The plugin now supports the new architecture.
