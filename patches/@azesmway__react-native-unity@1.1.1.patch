@@ -17,10 +17,10 @@ index 18afa007a877d007594f5d3b5cfde4926cb44b26..176c6bafa6d4692f261fc547e3f072cf
  #ifdef RCT_NEW_ARCH_ENABLED
  #import <React/RCTViewComponentView.h>
 diff --git a/ios/RNUnityView.mm b/ios/RNUnityView.mm
-index 6406f641db1faecd3084147e19d7fa364a71ec03..81471a1823695c4796d2d3ad9e59dd69814ef947 100644
+index 6406f641db1faecd3084147e19d7fa364a71ec03..d66c41765297bbaeab237dda8b3e820aa718387c 100644
 --- a/ios/RNUnityView.mm
 +++ b/ios/RNUnityView.mm
-@@ -32,6 +32,42 @@ UnityFramework* UnityFrameworkLoad() {
+@@ -32,6 +32,44 @@ UnityFramework* UnityFrameworkLoad() {
      return ufw;
  }
  
@@ -31,7 +31,9 @@ index 6406f641db1faecd3084147e19d7fa364a71ec03..81471a1823695c4796d2d3ad9e59dd69
 +
 +    if (@available(iOS 13.0, *)) {
 +        for (UIScene *scene in [[UIApplication sharedApplication] connectedScenes]) {
-+            if (scene.activationState != UISceneActivationStateForegroundActive ||
++            // Foreground-inactive still counts: unload can arrive while a system overlay is up.
++            if (scene.activationState == UISceneActivationStateUnattached ||
++                scene.activationState == UISceneActivationStateBackground ||
 +                ![scene isKindOfClass:[UIWindowScene class]]) {
 +                continue;
 +            }
@@ -63,7 +65,7 @@ index 6406f641db1faecd3084147e19d7fa364a71ec03..81471a1823695c4796d2d3ad9e59dd69
  @implementation RNUnityView {
      // YES once the Fabric view paused Unity for recycling, so we know to resume
      // the shared instance when the view comes back on screen (#180).
-@@ -134,13 +170,15 @@ NSDictionary* appLaunchOpts;
+@@ -134,13 +172,15 @@ NSDictionary* appLaunchOpts;
  - (void)unloadUnity {
      _unloaded = YES;
      _pausedForRecycle = NO;
@@ -83,6 +85,17 @@ index 6406f641db1faecd3084147e19d7fa364a71ec03..81471a1823695c4796d2d3ad9e59dd69
      }
  }
  
+@@ -201,6 +241,10 @@ NSDictionary* appLaunchOpts;
+       [[self ufw] pause:true];
+       _pausedForRecycle = YES;
+     }
++
++    // <UnityView> calls unloadUnity on unmount. The recycled instance serves the next
++    // mount, so clear the teardown latch or layoutSubviews never starts Unity again.
++    _unloaded = NO;
+ }
+ 
+ + (ComponentDescriptorProvider)componentDescriptorProvider {
 diff --git a/ios/RNUnityViewManager.mm b/ios/RNUnityViewManager.mm
 index 4c56a29edd128afcc3c2804dd62dfa73aef46482..defc7cc8db7b12fb634d3ec29c9f5a1a01ed3703 100644
 --- a/ios/RNUnityViewManager.mm
