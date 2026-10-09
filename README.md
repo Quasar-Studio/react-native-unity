@@ -1,5 +1,23 @@
 # @azesmway/react-native-unity
 
+> **Quasar Studio fork** of [azesmway/react-native-unity](https://github.com/azesmway/react-native-unity). Differences from upstream 1.1.1:
+>
+> - **iOS: `unloadUnity()` works under the UIScene life cycle** (required by the iOS 27 SDK, default in Expo SDK 58). Upstream looks up the host window via `UIApplication.delegate.window`. That is `nil` when a `SceneDelegate` owns the window, so the unload was silently skipped and Unity stayed resident.
+>
+> The fix touches only the native `ios/` sources, which ship as-is in the npm tarball. Use it in one of two ways:
+>
+> - **Recommended:** apply [`patches/@azesmway__react-native-unity@1.1.1.patch`](patches/@azesmway__react-native-unity@1.1.1.patch) over the npm package.
+>   1. Copy the file into your app's `patches/`.
+>   2. Register it in `pnpm-workspace.yaml`. pnpm 10+ reads it there, not from `package.json`:
+>      ```yaml
+>      patchedDependencies:
+>        '@azesmway/react-native-unity@1.1.1': patches/@azesmway__react-native-unity@1.1.1.patch
+>      ```
+>   3. Run `pnpm install`.
+>
+>   The result is byte-identical to this fork's `ios/` sources.
+> - Install this fork pinned to a commit: `github:Quasar-Studio/react-native-unity#<sha>`. This route runs the package's `prepare` build.
+
 The plugin that allows you to embed a Unity project into React Native as a full-fledged component. The plugin now supports the new architecture.
 
 ### Android
