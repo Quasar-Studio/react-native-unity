@@ -39,7 +39,9 @@ UIWindow* RNUnityHostWindow(UIView* view, UIWindow* exclude) {
 
     if (@available(iOS 13.0, *)) {
         for (UIScene *scene in [[UIApplication sharedApplication] connectedScenes]) {
-            if (scene.activationState != UISceneActivationStateForegroundActive ||
+            // Foreground-inactive still counts: unload can arrive while a system overlay is up.
+            if (scene.activationState == UISceneActivationStateUnattached ||
+                scene.activationState == UISceneActivationStateBackground ||
                 ![scene isKindOfClass:[UIWindowScene class]]) {
                 continue;
             }
@@ -239,6 +241,10 @@ NSDictionary* appLaunchOpts;
       [[self ufw] pause:true];
       _pausedForRecycle = YES;
     }
+
+    // <UnityView> calls unloadUnity on unmount. The recycled instance serves the next
+    // mount, so clear the teardown latch or layoutSubviews never starts Unity again.
+    _unloaded = NO;
 }
 
 + (ComponentDescriptorProvider)componentDescriptorProvider {
