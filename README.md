@@ -3,20 +3,19 @@
 > **Quasar Studio fork** of [azesmway/react-native-unity](https://github.com/azesmway/react-native-unity). Differences from upstream 1.1.1:
 >
 > - **iOS: `unloadUnity()` works under the UIScene life cycle** (required by the iOS 27 SDK, default in Expo SDK 58). Upstream looks up the host window via `UIApplication.delegate.window`. That is `nil` when a `SceneDelegate` owns the window, so the unload was silently skipped and Unity stayed resident.
+> - **iOS: remounting after an unload starts Unity again.** `<UnityView>` unloads Unity on unmount. Fabric then reuses the view instance for the next mount, and upstream never cleared its "unloaded" flag, so Unity stayed black.
 >
-> The fix touches only the native `ios/` sources, which ship as-is in the npm tarball. Use it in one of two ways:
+> The fixes touch only the native `ios/` sources, which ship as-is in the npm tarball. Apply them as a patch over the npm package:
 >
-> - **Recommended:** apply [`patches/@azesmway__react-native-unity@1.1.1.patch`](patches/@azesmway__react-native-unity@1.1.1.patch) over the npm package.
->   1. Copy the file into your app's `patches/`.
->   2. Register it in `pnpm-workspace.yaml`. pnpm 10+ reads it there, not from `package.json`:
->      ```yaml
->      patchedDependencies:
->        '@azesmway/react-native-unity@1.1.1': patches/@azesmway__react-native-unity@1.1.1.patch
->      ```
->   3. Run `pnpm install`.
+> 1. Copy [`patches/@azesmway__react-native-unity@1.1.1.patch`](patches/@azesmway__react-native-unity@1.1.1.patch) into your app's `patches/`. On Windows, add `*.patch text eol=lf` to `.gitattributes`, or git rewrites the patch with CRLF.
+> 2. Register it in `pnpm-workspace.yaml`. pnpm 10+ reads it there, not from `package.json`:
+>    ```yaml
+>    patchedDependencies:
+>      '@azesmway/react-native-unity@1.1.1': patches/@azesmway__react-native-unity@1.1.1.patch
+>    ```
+> 3. Run `pnpm install`.
 >
->   The result is byte-identical to this fork's `ios/` sources.
-> - Install this fork pinned to a commit: `github:Quasar-Studio/react-native-unity#<sha>`. This route runs the package's `prepare` build.
+> The result is byte-identical to this fork's `ios/` sources. Don't install the fork from git. Its `lib/` and `plugin/build/` aren't committed, and since pnpm 10.26 a git dependency's `prepare` build doesn't run unless `allowBuilds` permits it.
 
 The plugin that allows you to embed a Unity project into React Native as a full-fledged component. The plugin now supports the new architecture.
 
