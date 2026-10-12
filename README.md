@@ -5,7 +5,10 @@
 > - **iOS: `unloadUnity()` works under the UIScene life cycle** (required by the iOS 27 SDK, default in Expo SDK 58). Upstream looks up the host window via `UIApplication.delegate.window`. That is `nil` when a `SceneDelegate` owns the window, so the unload was silently skipped and Unity stayed resident.
 > - **iOS: remounting after an unload starts Unity again.** `<UnityView>` unloads Unity on unmount. Fabric then reuses the view instance for the next mount, and upstream never cleared its "unloaded" flag, so Unity stayed black.
 >
-> The fixes touch only the native `ios/` sources, which ship as-is in the npm tarball. Apply them as a patch over the npm package:
+> - **Android: events name their player.** A new `playerTag` prop (a number) is stamped on the Unity player the view creates, and every `onUnityMessage` / `onPlayerUnload` / `onPlayerQuit` event carries it as `nativeEvent.playerTag` next to `message`. The library routes all events to the newest view, so an unloading player's late messages and its unload confirmation land on the view that already waits for the next player; the tag tells them apart. iOS sends no tag: treat a missing tag as "current player".
+> - **Android: an Activity recreate no longer ends Unity for the process.** When the host Activity is destroyed but not finishing (a configuration change it does not handle, or the system dropped only the Activity), the player is unloaded, not destroyed, and `onPlayerUnload` follows; the next view boots a new player. Unity's `destroy()` either kills the process or unloads its native libraries, so after a real destroy a new view gets `onPlayerQuit` with `message: "destroyed"` instead of a black screen.
+>
+> The fixes touch `ios/`, `android/` and `src/`, which ship as-is in the npm tarball (Metro reads `src/` through the `react-native` field, and codegen reads `src/specs`). The prebuilt `lib/` is not patched, so `lib/typescript` types lack `playerTag`. Apply them as a patch over the npm package:
 >
 > 1. Copy [`patches/@azesmway__react-native-unity@1.1.1.patch`](patches/@azesmway__react-native-unity@1.1.1.patch) into your app's `patches/`. On Windows, add `*.patch text eol=lf` to `.gitattributes`, or git rewrites the patch with CRLF.
 > 2. Register it in `pnpm-workspace.yaml`. pnpm 10+ reads it there, not from `package.json`:
@@ -15,7 +18,7 @@
 >    ```
 > 3. Run `pnpm install`.
 >
-> The result is byte-identical to this fork's `ios/` sources. Don't install the fork from git. Its `lib/` and `plugin/build/` aren't committed, and since pnpm 10.26 a git dependency's `prepare` build doesn't run unless `allowBuilds` permits it.
+> The result is byte-identical to this fork's `ios/`, `android/` and `src/` sources. Don't install the fork from git. Its `lib/` and `plugin/build/` aren't committed, and since pnpm 10.26 a git dependency's `prepare` build doesn't run unless `allowBuilds` permits it.
 
 The plugin that allows you to embed a Unity project into React Native as a full-fledged component. The plugin now supports the new architecture.
 

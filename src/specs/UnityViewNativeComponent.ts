@@ -1,8 +1,13 @@
 import codegenNativeComponent from 'react-native/Libraries/Utilities/codegenNativeComponent';
 import codegenNativeCommands from 'react-native/Libraries/Utilities/codegenNativeCommands';
 import type { HostComponent, ViewProps } from 'react-native';
-import type { DirectEventHandler } from 'react-native/Libraries/Types/CodegenTypes';
+import type {
+  DirectEventHandler,
+  Int32,
+} from 'react-native/Libraries/Types/CodegenTypes';
 
+// Android also puts `playerTag: number` into every event payload (see UnityView.tsx). It is not
+// declared here on purpose: a codegen event field would make the iOS Fabric emitter send 0.
 export type UnityViewContentUpdateEvent = Readonly<{
   message: string;
 }>;
@@ -10,6 +15,7 @@ export type UnityViewContentUpdateEvent = Readonly<{
 export interface NativeProps extends ViewProps {
   androidKeepPlayerMounted?: boolean;
   fullScreen?: boolean;
+  playerTag?: Int32;
   onUnityMessage?: DirectEventHandler<UnityViewContentUpdateEvent>;
   onPlayerUnload?: DirectEventHandler<UnityViewContentUpdateEvent>;
   onPlayerQuit?: DirectEventHandler<UnityViewContentUpdateEvent>;

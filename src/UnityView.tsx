@@ -7,11 +7,19 @@ import type { ViewProps } from 'react-native';
 
 type UnityViewContentUpdateEvent = Readonly<{
   message: string;
+  /**
+   * Android: the `playerTag` prop of the view the Unity player was created for. Events of an
+   * older player (still unloading) can reach a newer view; compare tags to tell them apart.
+   * iOS sends no tag.
+   */
+  playerTag?: number;
 }>;
 
 type RNUnityViewProps = ViewProps & {
   androidKeepPlayerMounted?: boolean;
   fullScreen?: boolean;
+  /** Android: stamped on the player this view creates and echoed in its events. */
+  playerTag?: number;
   onUnityMessage?: DirectEventHandler<UnityViewContentUpdateEvent>;
   onPlayerUnload?: DirectEventHandler<UnityViewContentUpdateEvent>;
   onPlayerQuit?: DirectEventHandler<UnityViewContentUpdateEvent>;

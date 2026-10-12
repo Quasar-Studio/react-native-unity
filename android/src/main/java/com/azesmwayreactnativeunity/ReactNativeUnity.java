@@ -41,6 +41,15 @@ public class ReactNativeUnity {
     // A create request that arrived while the previous runtime was still unloading.
     private static Activity _pendingActivity;
     private static UnityPlayerCallback _pendingCallback;
+    private static int _pendingTag;
+
+    // The `playerTag` of the view the current player was created for. Read from Unity's thread
+    // when a message goes out, hence volatile.
+    private static volatile int _playerTag;
+
+    // The current player's lifecycle callback. Each player reports its end at most once: after the
+    // unload fallback released a player, a late report from Unity must not reset the next one.
+    private static UnityPlayerCallback _playerCallback;
 
     // Safety net: some Unity versions never deliver onUnityPlayerUnloaded. Without it we would
     // stay in the "unloading" state forever and never accept a new player.
@@ -63,7 +72,15 @@ public class ReactNativeUnity {
         return _isUnityPaused;
     }
 
-    public static void createPlayer(final Activity activity, final UnityPlayerCallback callback) throws InvocationTargetException, NoSuchMethodException, IllegalAccessException {
+    public static boolean isUnityQuit() {
+        return _isUnityQuit;
+    }
+
+    public static int getPlayerTag() {
+        return _playerTag;
+    }
+
+    public static void createPlayer(final Activity activity, final int playerTag, final UnityPlayerCallback callback) throws InvocationTargetException, NoSuchMethodException, IllegalAccessException {
         if (_isUnityQuit) {
             // Unity kills its own runtime on quit; a fresh UnityPlayer would crash the process.
             Log.e(TAG, "Unity has been quit — it cannot be started again in this process");
@@ -75,6 +92,7 @@ public class ReactNativeUnity {
             // coexist in one process, and the unload is asynchronous.
             _pendingActivity = activity;
             _pendingCallback = callback;
+            _pendingTag = playerTag;
             return;
         }
 
@@ -112,12 +130,15 @@ public class ReactNativeUnity {
                         // Wrap the caller's callback so the shared state is reset *before* the
                         // consumer sees onUnload/onQuit — otherwise `_isUnityReady` stays true
                         // for a runtime that no longer exists.
-                        unityPlayer = new UPlayer(activity, wrapCallback(callback));
+                        _playerTag = playerTag;
+                        _playerCallback = wrapCallback(callback);
+                        unityPlayer = new UPlayer(activity, _playerCallback);
                     } catch (ClassNotFoundException | InstantiationException | IllegalAccessException | InvocationTargetException e) {
                         // Previously swallowed silently, which left unityPlayer == null and
                         // caused an unrelated NPE below (windowFocusChanged) with no trace of
                         // the real cause. Log and abort initialization instead.
                         Log.e(TAG, "Failed to create Unity player", e);
+                        _playerCallback = null;
                         _isUnityCreating = false;
                         return;
                     }
@@ -198,10 +219,30 @@ public class ReactNativeUnity {
                 if (_isUnityUnloading && unityPlayer == player) {
                     Log.w(TAG, "Unity did not report onUnityPlayerUnloaded within "
                         + UNLOAD_TIMEOUT_MS + "ms — releasing the player anyway");
-                    onPlayerGone(false);
+                    // Through the player's callback, so the view still gets onPlayerUnload.
+                    if (_playerCallback != null) {
+                        _playerCallback.onUnload();
+                    } else {
+                        onPlayerGone(false);
+                    }
                 }
             }
         }, UNLOAD_TIMEOUT_MS);
+    }
+
+    /**
+     * The host Activity is being destroyed but not finishing (a configuration change it does not
+     * handle, or the system dropped only the Activity), so the process and the JS app live on.
+     * Unload instead of destroy(): Unity's destroy() either kills the process or unloads its native
+     * libraries, after which no new player can boot. A create request still waiting for an
+     * unload belongs to a view of this Activity; drop it, the new Activity's view asks again.
+     */
+    public static void unloadForRecreate(Activity activity) {
+        if (_pendingActivity == activity) {
+            _pendingActivity = null;
+            _pendingCallback = null;
+        }
+        unload();
     }
 
     public static void destroy() {
@@ -224,9 +265,11 @@ public class ReactNativeUnity {
         _isUnityUnloading = false;
         _isUnityCreating = false;
         unityPlayer = null;
+        _playerCallback = null;
 
         final Activity activity = _pendingActivity;
         final UnityPlayerCallback callback = _pendingCallback;
+        final int tag = _pendingTag;
         _pendingActivity = null;
         _pendingCallback = null;
 
@@ -238,7 +281,7 @@ public class ReactNativeUnity {
         if (activity != null && callback != null) {
             // The Unity screen was reopened while the old runtime was still unloading.
             try {
-                createPlayer(activity, callback);
+                createPlayer(activity, tag, callback);
             } catch (InvocationTargetException | NoSuchMethodException | IllegalAccessException e) {
                 Log.e(TAG, "Failed to recreate the Unity player after unload", e);
             }
@@ -254,12 +297,18 @@ public class ReactNativeUnity {
 
             @Override
             public void onUnload() {
+                if (_playerCallback != this) {
+                    return;
+                }
                 onPlayerGone(false);
                 callback.onUnload();
             }
 
             @Override
             public void onQuit() {
+                if (_playerCallback != this) {
+                    return;
+                }
                 onPlayerGone(true);
                 callback.onQuit();
             }
