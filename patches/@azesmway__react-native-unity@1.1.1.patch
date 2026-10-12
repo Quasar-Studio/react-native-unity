@@ -1,8 +1,8 @@
 diff --git a/android/src/main/java/com/azesmwayreactnativeunity/ReactNativeUnity.java b/android/src/main/java/com/azesmwayreactnativeunity/ReactNativeUnity.java
-index 5d3401f34b547138844239a18784d2f4db59e230..bf63e10bc53bb0e3b9d6bfabaabc59fcf4707faa 100644
+index 5d3401f34b547138844239a18784d2f4db59e230..577937b943e0fd091f536fb41dcbf98403e724bb 100644
 --- a/android/src/main/java/com/azesmwayreactnativeunity/ReactNativeUnity.java
 +++ b/android/src/main/java/com/azesmwayreactnativeunity/ReactNativeUnity.java
-@@ -41,6 +41,15 @@ public class ReactNativeUnity {
+@@ -41,6 +41,16 @@ public class ReactNativeUnity {
      // A create request that arrived while the previous runtime was still unloading.
      private static Activity _pendingActivity;
      private static UnityPlayerCallback _pendingCallback;
@@ -12,13 +12,14 @@ index 5d3401f34b547138844239a18784d2f4db59e230..bf63e10bc53bb0e3b9d6bfabaabc59fc
 +    // when a message goes out, hence volatile.
 +    private static volatile int _playerTag;
 +
-+    // The current player's lifecycle callback. Each player reports its end at most once: after the
++    // The current player's lifecycle callback. Each player reports its unload at most once: after the
 +    // unload fallback released a player, a late report from Unity must not reset the next one.
++    // (A quit is never dropped: it is process-wide.)
 +    private static UnityPlayerCallback _playerCallback;
  
      // Safety net: some Unity versions never deliver onUnityPlayerUnloaded. Without it we would
      // stay in the "unloading" state forever and never accept a new player.
-@@ -63,7 +72,15 @@ public class ReactNativeUnity {
+@@ -63,7 +73,15 @@ public class ReactNativeUnity {
          return _isUnityPaused;
      }
  
@@ -35,7 +36,7 @@ index 5d3401f34b547138844239a18784d2f4db59e230..bf63e10bc53bb0e3b9d6bfabaabc59fc
          if (_isUnityQuit) {
              // Unity kills its own runtime on quit; a fresh UnityPlayer would crash the process.
              Log.e(TAG, "Unity has been quit — it cannot be started again in this process");
-@@ -75,6 +92,7 @@ public class ReactNativeUnity {
+@@ -75,6 +93,7 @@ public class ReactNativeUnity {
              // coexist in one process, and the unload is asynchronous.
              _pendingActivity = activity;
              _pendingCallback = callback;
@@ -43,7 +44,7 @@ index 5d3401f34b547138844239a18784d2f4db59e230..bf63e10bc53bb0e3b9d6bfabaabc59fc
              return;
          }
  
-@@ -112,12 +130,15 @@ public class ReactNativeUnity {
+@@ -112,12 +131,15 @@ public class ReactNativeUnity {
                          // Wrap the caller's callback so the shared state is reset *before* the
                          // consumer sees onUnload/onQuit — otherwise `_isUnityReady` stays true
                          // for a runtime that no longer exists.
@@ -60,7 +61,7 @@ index 5d3401f34b547138844239a18784d2f4db59e230..bf63e10bc53bb0e3b9d6bfabaabc59fc
                          _isUnityCreating = false;
                          return;
                      }
-@@ -198,12 +219,32 @@ public class ReactNativeUnity {
+@@ -198,12 +220,32 @@ public class ReactNativeUnity {
                  if (_isUnityUnloading && unityPlayer == player) {
                      Log.w(TAG, "Unity did not report onUnityPlayerUnloaded within "
                          + UNLOAD_TIMEOUT_MS + "ms — releasing the player anyway");
@@ -94,7 +95,7 @@ index 5d3401f34b547138844239a18784d2f4db59e230..bf63e10bc53bb0e3b9d6bfabaabc59fc
      public static void destroy() {
          if (unityPlayer == null) {
              return;
-@@ -224,9 +265,11 @@ public class ReactNativeUnity {
+@@ -224,9 +266,11 @@ public class ReactNativeUnity {
          _isUnityUnloading = false;
          _isUnityCreating = false;
          unityPlayer = null;
@@ -106,7 +107,7 @@ index 5d3401f34b547138844239a18784d2f4db59e230..bf63e10bc53bb0e3b9d6bfabaabc59fc
          _pendingActivity = null;
          _pendingCallback = null;
  
-@@ -238,7 +281,7 @@ public class ReactNativeUnity {
+@@ -238,7 +282,7 @@ public class ReactNativeUnity {
          if (activity != null && callback != null) {
              // The Unity screen was reopened while the old runtime was still unloading.
              try {
@@ -115,7 +116,7 @@ index 5d3401f34b547138844239a18784d2f4db59e230..bf63e10bc53bb0e3b9d6bfabaabc59fc
              } catch (InvocationTargetException | NoSuchMethodException | IllegalAccessException e) {
                  Log.e(TAG, "Failed to recreate the Unity player after unload", e);
              }
-@@ -254,12 +297,18 @@ public class ReactNativeUnity {
+@@ -254,12 +298,18 @@ public class ReactNativeUnity {
  
              @Override
              public void onUnload() {
@@ -128,9 +129,9 @@ index 5d3401f34b547138844239a18784d2f4db59e230..bf63e10bc53bb0e3b9d6bfabaabc59fc
  
              @Override
              public void onQuit() {
-+                if (_playerCallback != this) {
-+                    return;
-+                }
++                // Not owner-guarded like onUnload: a quit ends Unity for the whole process, whichever
++                // player reports it, so the terminal state, the dropped pending create and the event
++                // to JS must always happen.
                  onPlayerGone(true);
                  callback.onQuit();
              }
@@ -148,7 +149,7 @@ index bc4e4737b5b0d7f9f550dbaf08933811ccca0284..cb172841ce127a199a1a4a0456e6ddc5
    public ReactNativeUnityView(Context context) {
      super(context);
 diff --git a/android/src/main/java/com/azesmwayreactnativeunity/ReactNativeUnityViewManager.java b/android/src/main/java/com/azesmwayreactnativeunity/ReactNativeUnityViewManager.java
-index d4eae6face478b5070e73bced70d6b45562784a7..a7ad93d6af287f16af7eba54b45e57730cd141cc 100644
+index d4eae6face478b5070e73bced70d6b45562784a7..393522195fb5f228ffe89027d32fc878b1e5a81c 100644
 --- a/android/src/main/java/com/azesmwayreactnativeunity/ReactNativeUnityViewManager.java
 +++ b/android/src/main/java/com/azesmwayreactnativeunity/ReactNativeUnityViewManager.java
 @@ -2,9 +2,11 @@ package com.azesmwayreactnativeunity;
@@ -172,13 +173,14 @@ index d4eae6face478b5070e73bced70d6b45562784a7..a7ad93d6af287f16af7eba54b45e5773
  import com.facebook.react.uimanager.ThemedReactContext;
  import com.facebook.react.uimanager.UIManagerHelper;
  import com.facebook.react.uimanager.annotations.ReactProp;
-@@ -55,6 +59,31 @@ public class ReactNativeUnityViewManager extends ReactNativeUnityViewManagerSpec
+@@ -55,14 +59,44 @@ public class ReactNativeUnityViewManager extends ReactNativeUnityViewManagerSpec
      // reachable through a ThemedReactContext, and it is what every other RN view manager does.
      view = new ReactNativeUnityView(context);
      view.addOnAttachStateChangeListener(this);
 +    return view;
 +  }
-+
+ 
+-    if (getPlayer() != null) {
 +  /**
 +   * The player is attached or created only once the initial props are applied, so a new player is
 +   * stamped with this view's `playerTag` (createViewInstance(context) runs before any prop).
@@ -201,19 +203,24 @@ index d4eae6face478b5070e73bced70d6b45562784a7..a7ad93d6af287f16af7eba54b45e5773
 +      });
 +      return view;
 +    }
- 
-     if (getPlayer() != null) {
++
++    if (getPlayer() != null && getPlayerTag() == tag) {
          try {
-@@ -62,7 +91,7 @@ public class ReactNativeUnityViewManager extends ReactNativeUnityViewManagerSpec
+             view.setUnityPlayer(getPlayer());
          } catch (InvocationTargetException | NoSuchMethodException | IllegalAccessException e) {}
      } else {
++        if (getPlayer() != null) {
++          // A live player of another tag: the view's owner drops its events, so it would never see
++          // a ready from it. Replace it; the create below waits for the unload and then replays.
++          unload();
++        }
          try {
 -            createPlayer(context.getCurrentActivity(), new UnityPlayerCallback() {
 +            createPlayer(context.getCurrentActivity(), tag, new UnityPlayerCallback() {
                @Override
                public void onReady() throws InvocationTargetException, NoSuchMethodException, IllegalAccessException {
                  // Unity boots asynchronously (createPlayer sleeps ~1s before signalling), so the
-@@ -75,14 +104,15 @@ public class ReactNativeUnityViewManager extends ReactNativeUnityViewManagerSpec
+@@ -75,14 +109,15 @@ public class ReactNativeUnityViewManager extends ReactNativeUnityViewManagerSpec
                  target.setUnityPlayer(getPlayer());
                }
  
@@ -231,16 +238,25 @@ index d4eae6face478b5070e73bced70d6b45562784a7..a7ad93d6af287f16af7eba54b45e5773
                }
              });
          } catch (InvocationTargetException | NoSuchMethodException | IllegalAccessException e) {}
-@@ -175,7 +205,7 @@ public class ReactNativeUnityViewManager extends ReactNativeUnityViewManagerSpec
+@@ -174,8 +209,16 @@ public class ReactNativeUnityViewManager extends ReactNativeUnityViewManagerSpec
+     }
    }
  
++  /**
++   * Unity's C# calls this static method (AndroidJavaClass.CallStatic), so no player instance comes
++   * with the message. The tag is read here, on the sender's thread, before anything is posted: a
++   * new player (and its tag) only exists once the previous runtime reported itself unloaded, so the
++   * runtime that can call in is the one the tag belongs to. The exception is the unload fallback,
++   * which releases a player Unity never confirmed as gone.
++   */
    public static void sendMessageToMobileApp(String message) {
 -    emitEvent("onUnityMessage", message);
-+    emitEvent("onUnityMessage", message, ReactNativeUnity.getPlayerTag());
++    final int playerTag = ReactNativeUnity.getPlayerTag();
++    emitEvent("onUnityMessage", message, playerTag);
    }
  
    /**
-@@ -193,12 +223,15 @@ public class ReactNativeUnityViewManager extends ReactNativeUnityViewManagerSpec
+@@ -193,12 +236,15 @@ public class ReactNativeUnityViewManager extends ReactNativeUnityViewManagerSpec
     * instance was already torn down, and `getJSModule(RCTEventEmitter)` does not deliver events to
     * Fabric views on the new architecture. Going through the EventDispatcher covers both
     * architectures.
@@ -259,7 +275,7 @@ index d4eae6face478b5070e73bced70d6b45562784a7..a7ad93d6af287f16af7eba54b45e5773
      // Snapshot the view: the static field can be nulled out by onDropViewInstance at any moment.
      if (target == null) {
        return;
-@@ -208,7 +241,7 @@ public class ReactNativeUnityViewManager extends ReactNativeUnityViewManagerSpec
+@@ -208,7 +254,7 @@ public class ReactNativeUnityViewManager extends ReactNativeUnityViewManagerSpec
        UiThreadUtil.runOnUiThread(new Runnable() {
          @Override
          public void run() {
@@ -268,7 +284,7 @@ index d4eae6face478b5070e73bced70d6b45562784a7..a7ad93d6af287f16af7eba54b45e5773
          }
        });
        return;
-@@ -234,6 +267,7 @@ public class ReactNativeUnityViewManager extends ReactNativeUnityViewManagerSpec
+@@ -234,6 +280,7 @@ public class ReactNativeUnityViewManager extends ReactNativeUnityViewManagerSpec
  
      WritableMap data = Arguments.createMap();
      data.putString("message", message);
@@ -276,7 +292,7 @@ index d4eae6face478b5070e73bced70d6b45562784a7..a7ad93d6af287f16af7eba54b45e5773
      dispatcher.dispatchEvent(new UnityViewEvent(UIManagerHelper.getSurfaceId(target), viewTag, eventName, data));
    }
  
-@@ -251,7 +285,7 @@ public class ReactNativeUnityViewManager extends ReactNativeUnityViewManagerSpec
+@@ -251,7 +298,7 @@ public class ReactNativeUnityViewManager extends ReactNativeUnityViewManagerSpec
    }
  
    /**
@@ -285,7 +301,7 @@ index d4eae6face478b5070e73bced70d6b45562784a7..a7ad93d6af287f16af7eba54b45e5773
     * `dispatch()` (via getEventData), Fabric uses `dispatchModern()` with the surfaceId.
     */
    private static class UnityViewEvent extends Event<UnityViewEvent> {
-@@ -307,7 +341,13 @@ public class ReactNativeUnityViewManager extends ReactNativeUnityViewManagerSpec
+@@ -307,7 +354,13 @@ public class ReactNativeUnityViewManager extends ReactNativeUnityViewManagerSpec
  
    @Override
    public void onHostDestroy() {
@@ -300,7 +316,7 @@ index d4eae6face478b5070e73bced70d6b45562784a7..a7ad93d6af287f16af7eba54b45e5773
        // Go through ReactNativeUnity so the shared state is cleared with the player — calling
        // UPlayer.destroy() directly left `_isUnityReady` true for a destroyed runtime.
        ReactNativeUnity.destroy();
-@@ -342,6 +382,11 @@ public class ReactNativeUnityViewManager extends ReactNativeUnityViewManagerSpec
+@@ -342,6 +395,11 @@ public class ReactNativeUnityViewManager extends ReactNativeUnityViewManagerSpec
      view.keepPlayerMounted = keepPlayerMounted;
    }
  
@@ -435,6 +451,49 @@ index 4c56a29edd128afcc3c2804dd62dfa73aef46482..defc7cc8db7b12fb634d3ec29c9f5a1a
  
      if(main != nil) {
          [main makeKeyAndVisible];
+diff --git a/lib/typescript/src/UnityView.d.ts b/lib/typescript/src/UnityView.d.ts
+index 40646108d89f2ce61e37634bb6a5c03dc7aad8eb..fc7055006485f7c2728fc79fc7fac4b8e1fc4e88 100644
+--- a/lib/typescript/src/UnityView.d.ts
++++ b/lib/typescript/src/UnityView.d.ts
+@@ -5,10 +5,18 @@ import type { DirectEventHandler } from 'react-native/Libraries/Types/CodegenTyp
+ import type { ViewProps } from 'react-native';
+ type UnityViewContentUpdateEvent = Readonly<{
+     message: string;
++    /**
++     * Android: the `playerTag` prop of the view the Unity player was created for. Events of an
++     * older player (still unloading) can reach a newer view; compare tags to tell them apart.
++     * iOS sends no tag.
++     */
++    playerTag?: number;
+ }>;
+ type RNUnityViewProps = ViewProps & {
+     androidKeepPlayerMounted?: boolean;
+     fullScreen?: boolean;
++    /** Android: stamped on the player this view creates and echoed in its events. */
++    playerTag?: number;
+     onUnityMessage?: DirectEventHandler<UnityViewContentUpdateEvent>;
+     onPlayerUnload?: DirectEventHandler<UnityViewContentUpdateEvent>;
+     onPlayerQuit?: DirectEventHandler<UnityViewContentUpdateEvent>;
+diff --git a/lib/typescript/src/specs/UnityViewNativeComponent.d.ts b/lib/typescript/src/specs/UnityViewNativeComponent.d.ts
+index e5a1a06f1a3964a7670eb2ee9ea07e45b357f6a5..881e0d2d4a360c3e2e03726d132613b0f9ccd422 100644
+--- a/lib/typescript/src/specs/UnityViewNativeComponent.d.ts
++++ b/lib/typescript/src/specs/UnityViewNativeComponent.d.ts
+@@ -2,13 +2,14 @@
+ /// <reference types="react-native/types/modules/codegen" />
+ /// <reference types="react-native/codegen" />
+ import type { HostComponent, ViewProps } from 'react-native';
+-import type { DirectEventHandler } from 'react-native/Libraries/Types/CodegenTypes';
++import type { DirectEventHandler, Int32 } from 'react-native/Libraries/Types/CodegenTypes';
+ export type UnityViewContentUpdateEvent = Readonly<{
+     message: string;
+ }>;
+ export interface NativeProps extends ViewProps {
+     androidKeepPlayerMounted?: boolean;
+     fullScreen?: boolean;
++    playerTag?: Int32;
+     onUnityMessage?: DirectEventHandler<UnityViewContentUpdateEvent>;
+     onPlayerUnload?: DirectEventHandler<UnityViewContentUpdateEvent>;
+     onPlayerQuit?: DirectEventHandler<UnityViewContentUpdateEvent>;
 diff --git a/src/UnityView.tsx b/src/UnityView.tsx
 index 87e6df64c78ebffb96490026af05d0b60936d445..fa82dd0412a9f1038715ea4bb04797eefa6342c4 100644
 --- a/src/UnityView.tsx
