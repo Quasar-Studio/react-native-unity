@@ -2,9 +2,11 @@ package com.azesmwayreactnativeunity;
 
 import static com.azesmwayreactnativeunity.ReactNativeUnity.*;
 
+import android.app.Activity;
 import android.content.Context;
 import android.content.ContextWrapper;
 import android.os.Handler;
+import android.os.Looper;
 import android.view.View;
 
 import androidx.annotation.NonNull;
@@ -20,6 +22,8 @@ import com.facebook.react.bridge.UiThreadUtil;
 import com.facebook.react.bridge.WritableMap;
 import com.facebook.react.common.MapBuilder;
 import com.facebook.react.module.annotations.ReactModule;
+import com.facebook.react.uimanager.ReactStylesDiffMap;
+import com.facebook.react.uimanager.StateWrapper;
 import com.facebook.react.uimanager.ThemedReactContext;
 import com.facebook.react.uimanager.UIManagerHelper;
 import com.facebook.react.uimanager.annotations.ReactProp;
@@ -55,6 +59,31 @@ public class ReactNativeUnityViewManager extends ReactNativeUnityViewManagerSpec
     // reachable through a ThemedReactContext, and it is what every other RN view manager does.
     view = new ReactNativeUnityView(context);
     view.addOnAttachStateChangeListener(this);
+    return view;
+  }
+
+  /**
+   * The player is attached or created only once the initial props are applied, so a new player is
+   * stamped with this view's `playerTag` (createViewInstance(context) runs before any prop).
+   */
+  @NonNull
+  @Override
+  protected ReactNativeUnityView createViewInstance(int reactTag, @NonNull ThemedReactContext context, @Nullable ReactStylesDiffMap initialProps, @Nullable StateWrapper stateWrapper) {
+    final ReactNativeUnityView view = super.createViewInstance(reactTag, context, initialProps, stateWrapper);
+    final int tag = view.playerTag;
+
+    if (isUnityQuit()) {
+      // Unity's destroy() kills the process or unloads Unity's native libraries, so no player can
+      // boot again in this process. Say so instead of leaving the view black. Posted, so the
+      // event does not race the view's registration with the renderer.
+      new Handler(Looper.getMainLooper()).post(new Runnable() {
+        @Override
+        public void run() {
+          emitEvent(view, "onPlayerQuit", "destroyed", tag);
+        }
+      });
+      return view;
+    }
 
     if (getPlayer() != null) {
         try {
@@ -62,7 +91,7 @@ public class ReactNativeUnityViewManager extends ReactNativeUnityViewManagerSpec
         } catch (InvocationTargetException | NoSuchMethodException | IllegalAccessException e) {}
     } else {
         try {
-            createPlayer(context.getCurrentActivity(), new UnityPlayerCallback() {
+            createPlayer(context.getCurrentActivity(), tag, new UnityPlayerCallback() {
               @Override
               public void onReady() throws InvocationTargetException, NoSuchMethodException, IllegalAccessException {
                 // Unity boots asynchronously (createPlayer sleeps ~1s before signalling), so the
@@ -75,14 +104,15 @@ public class ReactNativeUnityViewManager extends ReactNativeUnityViewManagerSpec
                 target.setUnityPlayer(getPlayer());
               }
 
+              // The tag of the player that is gone, not of whichever view is the newest now.
               @Override
               public void onUnload() {
-                emitEvent("onPlayerUnload", "MyMessage");
+                emitEvent("onPlayerUnload", "MyMessage", tag);
               }
 
               @Override
               public void onQuit() {
-                emitEvent("onPlayerQuit", "MyMessage");
+                emitEvent("onPlayerQuit", "MyMessage", tag);
               }
             });
         } catch (InvocationTargetException | NoSuchMethodException | IllegalAccessException e) {}
@@ -175,7 +205,7 @@ public class ReactNativeUnityViewManager extends ReactNativeUnityViewManagerSpec
   }
 
   public static void sendMessageToMobileApp(String message) {
-    emitEvent("onUnityMessage", message);
+    emitEvent("onUnityMessage", message, ReactNativeUnity.getPlayerTag());
   }
 
   /**
@@ -193,12 +223,15 @@ public class ReactNativeUnityViewManager extends ReactNativeUnityViewManagerSpec
    * instance was already torn down, and `getJSModule(RCTEventEmitter)` does not deliver events to
    * Fabric views on the new architecture. Going through the EventDispatcher covers both
    * architectures.
+   *
+   * <p>Events go to the newest view, which may already belong to the next player. `playerTag`
+   * names the player an event comes from, so JS can drop what an older player still sends.
    */
-  private static void emitEvent(final String eventName, final String message) {
-    emitEvent(view, eventName, message);
+  private static void emitEvent(final String eventName, final String message, final int playerTag) {
+    emitEvent(view, eventName, message, playerTag);
   }
 
-  private static void emitEvent(@Nullable final ReactNativeUnityView target, final String eventName, final String message) {
+  private static void emitEvent(@Nullable final ReactNativeUnityView target, final String eventName, final String message, final int playerTag) {
     // Snapshot the view: the static field can be nulled out by onDropViewInstance at any moment.
     if (target == null) {
       return;
@@ -208,7 +241,7 @@ public class ReactNativeUnityViewManager extends ReactNativeUnityViewManagerSpec
       UiThreadUtil.runOnUiThread(new Runnable() {
         @Override
         public void run() {
-          emitEvent(target, eventName, message);
+          emitEvent(target, eventName, message, playerTag);
         }
       });
       return;
@@ -234,6 +267,7 @@ public class ReactNativeUnityViewManager extends ReactNativeUnityViewManagerSpec
 
     WritableMap data = Arguments.createMap();
     data.putString("message", message);
+    data.putInt("playerTag", playerTag);
     dispatcher.dispatchEvent(new UnityViewEvent(UIManagerHelper.getSurfaceId(target), viewTag, eventName, data));
   }
 
@@ -251,7 +285,7 @@ public class ReactNativeUnityViewManager extends ReactNativeUnityViewManagerSpec
   }
 
   /**
-   * Generic direct event carrying `{ message }`. Works on both architectures: Paper uses
+   * Generic direct event carrying `{ message, playerTag }`. Works on both architectures: Paper uses
    * `dispatch()` (via getEventData), Fabric uses `dispatchModern()` with the surfaceId.
    */
   private static class UnityViewEvent extends Event<UnityViewEvent> {
@@ -307,7 +341,13 @@ public class ReactNativeUnityViewManager extends ReactNativeUnityViewManagerSpec
 
   @Override
   public void onHostDestroy() {
-    if (isUnityReady()) {
+    // Still the Activity being destroyed: ReactContext clears it only after the listeners ran.
+    Activity activity = context.getCurrentActivity();
+    if (activity != null && !activity.isFinishing()) {
+      // Recreated (e.g. a locale change): the process lives on and the next Activity's view must
+      // be able to boot Unity, which destroy() would rule out. The player's onPlayerUnload follows.
+      ReactNativeUnity.unloadForRecreate(activity);
+    } else if (isUnityReady()) {
       // Go through ReactNativeUnity so the shared state is cleared with the player — calling
       // UPlayer.destroy() directly left `_isUnityReady` true for a destroyed runtime.
       ReactNativeUnity.destroy();
@@ -340,6 +380,11 @@ public class ReactNativeUnityViewManager extends ReactNativeUnityViewManagerSpec
   @ReactProp(name = "androidKeepPlayerMounted", defaultBoolean = false)
   public void setAndroidKeepPlayerMounted(ReactNativeUnityView view, boolean keepPlayerMounted) {
     view.keepPlayerMounted = keepPlayerMounted;
+  }
+
+  @ReactProp(name = "playerTag", defaultInt = 0)
+  public void setPlayerTag(ReactNativeUnityView view, int playerTag) {
+    view.playerTag = playerTag;
   }
 
   @ReactProp(name = "fullScreen", defaultBoolean = true)

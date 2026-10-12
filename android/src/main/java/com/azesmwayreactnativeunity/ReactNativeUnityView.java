@@ -17,6 +17,8 @@ public class ReactNativeUnityView extends FrameLayout {
 
   private UPlayer view;
   public boolean keepPlayerMounted = false;
+  // The `playerTag` prop. A player created for this view carries it in its events.
+  public int playerTag = 0;
 
   public ReactNativeUnityView(Context context) {
     super(context);

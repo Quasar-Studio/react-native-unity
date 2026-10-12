@@ -11,6 +11,7 @@ public abstract class ReactNativeUnityViewManagerSpec<T extends View> extends Si
   public abstract void postMessage(T view, String gameObject, String methodName, String message);
   public abstract void setAndroidKeepPlayerMounted(T view, boolean value);
   public abstract void setFullScreen(T view, boolean value);
+  public abstract void setPlayerTag(T view, int value);
   public abstract void unloadUnity(T view);
   public abstract void pauseUnity(T view, boolean pause);
   public abstract void resumeUnity(T view);
