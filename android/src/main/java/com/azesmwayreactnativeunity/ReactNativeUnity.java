@@ -47,8 +47,9 @@ public class ReactNativeUnity {
     // when a message goes out, hence volatile.
     private static volatile int _playerTag;
 
-    // The current player's lifecycle callback. Each player reports its end at most once: after the
+    // The current player's lifecycle callback. Each player reports its unload at most once: after the
     // unload fallback released a player, a late report from Unity must not reset the next one.
+    // (A quit is never dropped: it is process-wide.)
     private static UnityPlayerCallback _playerCallback;
 
     // Safety net: some Unity versions never deliver onUnityPlayerUnloaded. Without it we would
@@ -306,9 +307,9 @@ public class ReactNativeUnity {
 
             @Override
             public void onQuit() {
-                if (_playerCallback != this) {
-                    return;
-                }
+                // Not owner-guarded like onUnload: a quit ends Unity for the whole process, whichever
+                // player reports it, so the terminal state, the dropped pending create and the event
+                // to JS must always happen.
                 onPlayerGone(true);
                 callback.onQuit();
             }
