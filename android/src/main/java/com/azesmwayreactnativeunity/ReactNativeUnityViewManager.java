@@ -85,11 +85,16 @@ public class ReactNativeUnityViewManager extends ReactNativeUnityViewManagerSpec
       return view;
     }
 
-    if (getPlayer() != null) {
+    if (getPlayer() != null && getPlayerTag() == tag) {
         try {
             view.setUnityPlayer(getPlayer());
         } catch (InvocationTargetException | NoSuchMethodException | IllegalAccessException e) {}
     } else {
+        if (getPlayer() != null) {
+          // A live player of another tag: the view's owner drops its events, so it would never see
+          // a ready from it. Replace it; the create below waits for the unload and then replays.
+          unload();
+        }
         try {
             createPlayer(context.getCurrentActivity(), tag, new UnityPlayerCallback() {
               @Override
@@ -204,8 +209,16 @@ public class ReactNativeUnityViewManager extends ReactNativeUnityViewManagerSpec
     }
   }
 
+  /**
+   * Unity's C# calls this static method (AndroidJavaClass.CallStatic), so no player instance comes
+   * with the message. The tag is read here, on the sender's thread, before anything is posted: a
+   * new player (and its tag) only exists once the previous runtime reported itself unloaded, so the
+   * runtime that can call in is the one the tag belongs to. The exception is the unload fallback,
+   * which releases a player Unity never confirmed as gone.
+   */
   public static void sendMessageToMobileApp(String message) {
-    emitEvent("onUnityMessage", message, ReactNativeUnity.getPlayerTag());
+    final int playerTag = ReactNativeUnity.getPlayerTag();
+    emitEvent("onUnityMessage", message, playerTag);
   }
 
   /**
